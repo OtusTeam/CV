@@ -1,0 +1,140 @@
+1. Переходим на сайт и выбираем вашу ОС: https://docs.docker.com/engine/install/.
+Далее будет описание на примере для Ubunta:
+
+2. Удаляем старые версии докера
+sudo apt-get remove docker docker-engine docker.io containerd runc
+
+3. Устанавливаем докер:
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io
+
+4. Проверяем установился ли докер:
+$ docker --version
+Docker version 20.10.6, build 370c289
+
+5. Так можно посмотреть список доступных образов в вашей системе:
+$ docker image ls
+REPOSITORY    TAG       IMAGE ID       CREATED       SIZE
+hello-world   latest    fce289e99eb9   2 years ago   1.84kB
+
+6. Удалить ненужный образ можно так (b4879c167fc1 это id образа):
+docker image rm b4879c167fc1
+Либо так:
+docker rmi b4879c167fc1
+
+7. Устанавливаем nvidia-container-toolkit для работы с NVIDIA-драйверами в докере:
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+
+8. Пишем Dockerfile с минимальной конфигурацией:
+FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
+ENV DEBIAN_FRONTEND=noninteractive LANG=C TZ=UTC
+# run the command
+CMD ["/bin/bash"]
+
+9. Запускаем сборку контейнера "otus-cv-cuda:1.0.0" из образа "nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04":
+$ docker build -t otus-cv-cuda:1.0.0 .
+Sending build context to Docker daemon  13.31kB
+Step 1/3 : FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
+
+10.1-cudnn7-devel-ubuntu18.04: Pulling from nvidia/cuda
+...
+Successfully built 50c707237b66
+Successfully tagged otus-cv-cuda:1.0.0
+
+10. Проверяем список доступных образов в системе:
+$ docker image ls
+REPOSITORY     TAG                             IMAGE ID       CREATED         SIZE
+otus-cv-cuda   1.0.0                           50c707237b66   3 minutes ago   3.63GB
+nvidia/cuda    10.1-cudnn7-devel-ubuntu18.04   04c5e579249b   5 days ago      3.63GB
+hello-world    latest                          fce289e99eb9   2 years ago     1.84kB
+
+11. Проверяем доступность драйверов NVIDIA в собранном образе "otus-cv-cuda:1.0.0":
+$ docker run --gpus all otus-cv-cuda:1.0.0 nvidia-smi
+Sun Apr 25 13:34:05 2021       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 440.33.01    Driver Version: 440.33.01    CUDA Version: 10.2     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|===============================+======================+======================|
+|   0  TITAN X (Pascal)    Off  | 00000000:17:00.0 Off |                  N/A |
+| 23%   34C    P8     8W / 250W |      2MiB / 12196MiB |      0%      Default |
++-------------------------------+----------------------+----------------------+
+|   1  TITAN X (Pascal)    Off  | 00000000:65:00.0  On |                  N/A |
+| 26%   46C    P8    18W / 250W |   1201MiB / 12188MiB |      7%      Default |
++-------------------------------+----------------------+----------------------+
++-----------------------------------------------------------------------------+
+| Processes:                                                       GPU Memory |
+|  GPU       PID   Type   Process name                             Usage      |
+|=============================================================================|
++-----------------------------------------------------------------------------+
+Аналогично для контейнера "nvidia/cuda":
+docker run --gpus all --rm nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04  nvidia-smi
+
+12. Добавляем в Dockerfile нужные библиотеки и пересобираем образ:
+FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
+ENV DEBIAN_FRONTEND=noninteractive LANG=C TZ=UTC
+ENV TERM linux
+# install some basic utilities
+RUN set -xue ;\
+    apt-get update ;\
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libglib2.0-0 \
+        wget \
+        python3-dev \
+        python3-pip \
+    ;\
+    rm -rf /var/lib/apt/lists/*
+# install libs and frameworks
+RUN pip3 install setuptools ;\
+    pip3 install numpy ;\
+    pip3 install matplotlib ;\
+    pip3 install torch torchvision; \
+    pip3 install tensorflow-gpu; \
+    pip3 install jupyterlab
+WORKDIR /playground
+# run the command
+CMD ["/bin/bash"]
+#CMD ["jupyter", "notebook", "--port=8789", "--no-browser", "--ip=0.0.0.0", "--allow-root"]
+
+13. Запускаем контейнер "otus-cv-cuda:1.0.0":
+docker run -it --name otus --volume=/home/ubuntu/data:/playground/data -p 8789:8789 --gpus all otus-cv-cuda:1.0.0
+
+14. Запускаем jupyter внутри запущенного образа:
+$ jupyter notebook --no-browser --port=8789 --ip=0.0.0.0 --allow-root 
+[I 14:53:20.041 NotebookApp] Serving notebooks from local directory: /
+[I 14:53:20.041 NotebookApp] Jupyter Notebook 6.3.0 is running at:
+[I 14:53:20.041 NotebookApp] http://95e9085c9f23:8789/?token=e04b7d2f5c90f074040bb3a4070377d02d4aa3f1d00d20b0
+[I 14:53:20.041 NotebookApp]  or http://127.0.0.1:8789/?token=e04b7d2f5c90f074040bb3a4070377d02d4aa3f1d00d20b0
+
+*Если в Dockerfile запуск jupyter был прописан в команде CMD, то он будет запущен сразу после запуска контейнера.
+Открываем ссылку http://127.0.0.1:8789/?token=e04b7d2f5c90f074040bb3a4070377d02d4aa3f1d00d20b0  в браузере и видим Jupyter notebook.
+
+15. Используйте сочетание клавиш Ctrl+P+Q чтобы отвязать запущенный контейнер от терминала. Введите в терминале docker container attach otus чтобы вновь покдлючиться к запущенному контейнеру.
+
+16. Запустить остановленный контейнер и подключиться к нему:
+$ docker start otus
+otus
+$ docker container attach otus
+root@eab84ff5a641:/# 
+
+17. Посмотреть все контейнеры в системе:
+$ docker ps --all
+CONTAINER ID   IMAGE                                       COMMAND        CREATED              STATUS                      PORTS                                       NAMES
+eab84ff5a641   otus-cv-cuda:1.0.0                          "/bin/bash"    About a minute ago   Up 6 seconds                0.0.0.0:8789->8789/tcp, :::8789->8789/tcp   otus
+72a8a670a8fe   nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04   "nvidia-smi"   24 minutes ago       Exited (0) 24 minutes ago                                               mystifying_ardinghelli
+abbb9d91c2e5   50c707237b66                                "nvidia-smi"   26 minutes ago       Exited (0) 26 minutes ago                                               stupefied_germain
+
+18. Удалить ненужный контейнер можно следующими способами:
+docker rm 96dae4bc4e6e       # Удалить контейнер по ID
+docker rm otus               # Удалить контейнер по имени
+docker container prune       # Удалить все остановленные контейнеры
+docker system prune          # Удалить все остановленные контейнеры и промежуточные образы
